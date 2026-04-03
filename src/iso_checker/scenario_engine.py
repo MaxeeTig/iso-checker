@@ -23,6 +23,7 @@ class ValidateConfig:
     required_fields: list[str] = field(default_factory=list)
     field48_check_de3: bool = False
     matches_step: str | None = None
+    expect_field_values: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,10 +65,13 @@ class ScenarioLedger:
 
 
 def _parse_validate(d: dict[str, Any]) -> ValidateConfig:
+    efv_raw = d.get("expect_field_values") or {}
+    expect_field_values = {str(k): str(v) for k, v in efv_raw.items()} if isinstance(efv_raw, dict) else {}
     return ValidateConfig(
         required_fields=list(d.get("required_fields") or []),
         field48_check_de3=bool(d.get("field48_check_de3", False)),
         matches_step=d.get("matches_step"),
+        expect_field_values=expect_field_values,
     )
 
 
@@ -189,6 +193,21 @@ def run_validations(decoded: dict[str, Any], step: Step, ledger: ScenarioLedger)
                     f"Scenario requires field {extra} for step {step.id}.",
                     field=extra,
                     spec_hint="scenario validate.required_fields",
+                )
+            )
+    for field_id, expected in step.validate.expect_field_values.items():
+        fid = str(field_id)
+        actual = str(decoded.get(fid) or "").strip()
+        exp = str(expected).strip()
+        if actual != exp:
+            fail.append(
+                CheckFailure(
+                    ErrorCode.VALIDATION_RULE,
+                    f"Scenario expects field {fid}={exp!r} for step {step.id!r}, got {actual!r}.",
+                    field=fid,
+                    expected=exp,
+                    actual=actual,
+                    spec_hint="scenario validate.expect_field_values",
                 )
             )
     if step.validate.field48_check_de3 and "48" in present:

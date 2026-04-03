@@ -1,0 +1,24 @@
+scenarios:
+  - name: sign_on_sign_off
+    description: >
+      SVFE network management: client sends 1804 sign-on (Field 24 = 801), server answers 1814
+      with approval; then client sends 1804 sign-off (Field 24 = 802), server confirms with 1814.
+    steps:
+      - id: sign_on
+        expect_mti: "1804"
+        validate:
+          expect_field_values:
+            "24": "801"
+        respond:
+          mti: "1814"
+          field_overrides:
+            "39": "000"
+      - id: sign_off
+        expect_mti: "1804"
+        validate:
+          expect_field_values:
+            "24": "802"
+        respond:
+          mti: "1814"
+          field_overrides:
+            "39": "000"

@@ -20,6 +20,7 @@ iso-checker serve --scenario-file scenarios/default.yaml --scenario-name network
 | `id` | Stable id for ledger references (e.g. `auth`). |
 | `expect_mti` | MTI the partner must send for this step. |
 | `validate.required_fields` | Extra data elements (digits) that must be present in addition to spec **M**andatory fields. |
+| `validate.expect_field_values` | Map of DE number → exact value (string); request field must match (e.g. sign-on **24**=`801`). |
 | `validate.field48_check_de3` | If true and DE48 present, require tag **002** and match known Processing Code → SVFE type mappings (subset implemented). |
 | `validate.matches_step` | Id of a prior step; for reversals, **PAN (DE2)** and **RRN (DE37)** must match that step’s request/response. |
 | `respond.mti` | Simulator response MTI. |

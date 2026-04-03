@@ -51,6 +51,45 @@ scenarios:
     assert s.steps[0].id == "a"
 
 
+def test_expect_field_values_sign_on():
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "sign_on_off.yaml"
+    sc = load_scenario_file(scenario_path, "sign_on_sign_off")
+    ledger = ScenarioLedger()
+    req_on = {"t": "1804", "11": "000001", "12": "250403120000", "24": "801"}
+    dec_on, _ = decode_iso_message(encode_iso_message(req_on))
+    assert not run_validations(dec_on, sc.steps[0], ledger)
+    rsp_on = {"t": "1814", "11": req_on["11"], "24": "801", "39": "000"}
+    ledger.record(sc.steps[0].id, dec_on, rsp_on)
+    req_off = {"t": "1804", "11": "000002", "12": "250403120001", "24": "802"}
+    dec_off, _ = decode_iso_message(encode_iso_message(req_off))
+    assert not run_validations(dec_off, sc.steps[1], ledger)
+
+
+def test_expect_field_values_wrong_de24_fails(tmp_path: Path):
+    p = tmp_path / "s.yaml"
+    p.write_text(
+        """
+scenarios:
+  - name: s
+    steps:
+      - id: sign_on
+        expect_mti: "1804"
+        validate:
+          expect_field_values:
+            "24": "801"
+        respond:
+          mti: "1814"
+""",
+        encoding="utf-8",
+    )
+    sc = load_scenario_file(p, "s")
+    req = {"t": "1804", "11": "000001", "12": "250403001200", "24": "831"}
+    dec, _ = decode_iso_message(encode_iso_message(req))
+    fails = run_validations(dec, sc.steps[0], ScenarioLedger())
+    assert fails
+    assert fails[0].code == ErrorCode.VALIDATION_RULE
+
+
 def test_auth_then_reversal_match():
     scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "default.yaml"
     sc = load_scenario_file(scenario_path, "auth_reversal")
