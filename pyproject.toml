@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iso-checker"
+version = "0.1.0"
+description = "SVFE Host2Host ISO 8583 partner simulator and scenario checker"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pyiso8583>=4.0.1",
+  "pyyaml>=6.0",
+  "pydantic>=2.0",
+  "pydantic-settings>=2.0",
+  "structlog>=24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+iso-checker = "iso_checker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

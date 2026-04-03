@@ -1,0 +1,31 @@
+scenarios:
+  - name: auth_reversal
+    description: Authorization 1100 then reversal 1420; RRN and PAN must match first step.
+    steps:
+      - id: auth
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      - id: reversal
+        expect_mti: "1420"
+        validate:
+          matches_step: auth
+        respond:
+          mti: "1430"
+          field_overrides:
+            "39": "000"
+
+  - name: network_echo
+    description: Network management echo (1804 / 831) and 1814 response.
+    steps:
+      - id: echo
+        expect_mti: "1804"
+        validate: {}
+        respond:
+          mti: "1814"
+          field_overrides:
+            "39": "000"

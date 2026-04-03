@@ -1,0 +1,22 @@
+# Example: mount scenarios from host, expose simulator on 8583
+services:
+  iso-checker:
+    build: .
+    ports:
+      - "8583:8583"
+    volumes:
+      - ./scenarios:/app/scenarios:ro
+    command:
+      [
+        "serve",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8583",
+        "--scenario-file",
+        "/app/scenarios/default.yaml",
+        "--scenario-name",
+        "auth_reversal",
+        "--log-level",
+        "INFO",
+      ]
