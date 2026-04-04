@@ -3,7 +3,7 @@
 Send a sample authorization request (MTI 1100) to the ISO checker / SVFE simulator.
 
 Uses the same 2-byte big-endian length framing as Host2Host. Run from the
-repository root (with dependencies installed), or after: pip install -e .
+repository root with the virtualenv activated and dependencies installed.
 
   python scripts/client_send_auth.py --host 127.0.0.1 --port 8583
 

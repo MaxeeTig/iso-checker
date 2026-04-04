@@ -8,14 +8,16 @@ See **limitations** and usage in this file after the first release; scenario aut
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-.venv/bin/iso-checker serve --scenario-file scenarios/default.yaml --port 8583
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pip install -e .
+python -m iso_checker.cli serve --scenario-file scenarios/default.yaml --port 8583
 ```
 
 Validate YAML only:
 
 ```bash
-.venv/bin/iso-checker validate-scenarios scenarios/default.yaml
+python -m iso_checker.cli validate-scenarios scenarios/default.yaml
 ```
 
 Docker (see also `docker-compose.example.yml`):
@@ -39,6 +41,8 @@ From repo root with venv active:
 ```bash
 python scripts/client_send_auth.py --host <simulator-host> --port 8583
 ```
+
+If you prefer the console script after installation, `iso-checker ...` still works. The `python -m iso_checker.cli ...` form is documented here because it is the more familiar Python workflow for many teams.
 
 Optional: `--reversal` sends **1420** after a successful **1110** (same TCP session; uses RRN from the response). See `scripts/client_send_auth.py --help` for PAN, amount, STAN, and Field 48 tag 002.
 
