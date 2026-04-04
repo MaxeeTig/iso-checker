@@ -1,0 +1,30 @@
+scenarios:
+  - name: reversal_then_repeat
+    description: >
+      Authorization, first reversal 1420 with 1430 ack, then reversal repeat 1421 if ack was doubtful.
+      Repeat step matches PAN/RRN to the first reversal exchange (ledger step reversal).
+    steps:
+      - id: auth
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      - id: reversal
+        expect_mti: "1420"
+        validate:
+          matches_step: auth
+        respond:
+          mti: "1430"
+          field_overrides:
+            "39": "000"
+      - id: reversal_repeat
+        expect_mti: "1421"
+        validate:
+          matches_step: reversal
+        respond:
+          mti: "1430"
+          field_overrides:
+            "39": "000"

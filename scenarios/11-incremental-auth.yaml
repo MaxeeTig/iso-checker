@@ -1,0 +1,15 @@
+scenarios:
+  - name: incremental_authorization
+    description: >
+      Incremental authorization uses function code 181 in Field 24 (same MTI 1100 as normal auth).
+    steps:
+      - id: incremental
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+          expect_field_values:
+            "24": "181"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"

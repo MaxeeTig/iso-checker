@@ -1,0 +1,15 @@
+scenarios:
+  - name: p2p_debit
+    description: >
+      Card-to-card style debit leg: DE3 500000, Field 48 tag 002 = 781 (P2P Debit) per SVFE table.
+    steps:
+      - id: p2p_debit
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+          expect_field_values:
+            "3": "500000"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"

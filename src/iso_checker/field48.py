@@ -7,6 +7,10 @@ from iso_checker.tlv import parse_lll_tagged_tlv
 # Full table is in docs; expand as needed.
 _PCODE_TO_SVFE: dict[str, str] = {
     "000000": "774",
+    "180000": "736",
+    "290000": "785",
+    "500000": "781",
+    "900000": "737",
 }
 
 

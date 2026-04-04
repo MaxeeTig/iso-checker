@@ -4,7 +4,7 @@ import pytest
 
 from iso_checker.errors import ErrorCode
 from iso_checker.message_codec import decode_iso_message, encode_iso_message
-from iso_checker.scenario_engine import ScenarioLedger, load_scenario_file, run_validations
+from iso_checker.scenario_engine import ScenarioLedger, list_scenarios, load_scenario_file, run_validations
 
 
 def _auth_msg():
@@ -51,8 +51,44 @@ scenarios:
     assert s.steps[0].id == "a"
 
 
+def test_load_scenario_from_directory(tmp_path: Path):
+    (tmp_path / "a.yaml").write_text(
+        """
+scenarios:
+  - name: first
+    description: First scenario
+    steps:
+      - id: a
+        expect_mti: "1100"
+        validate: {}
+        respond:
+          mti: "1110"
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.yaml").write_text(
+        """
+scenarios:
+  - name: second
+    description: Second scenario
+    steps:
+      - id: b
+        expect_mti: "1804"
+        validate: {}
+        respond:
+          mti: "1814"
+""",
+        encoding="utf-8",
+    )
+    catalog = list_scenarios(tmp_path)
+    assert [str(item["name"]) for item in catalog] == ["first", "second"]
+    assert [str(item["_source_file"]) for item in catalog] == ["a.yaml", "b.yaml"]
+    scenario = load_scenario_file(tmp_path, "second")
+    assert scenario.name == "second"
+
+
 def test_expect_field_values_sign_on():
-    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "sign_on_off.yaml"
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "03-sign_on_off.yaml"
     sc = load_scenario_file(scenario_path, "sign_on_sign_off")
     ledger = ScenarioLedger()
     req_on = {"t": "1804", "11": "000001", "12": "250403120000", "24": "801"}
@@ -91,7 +127,7 @@ scenarios:
 
 
 def test_auth_then_reversal_match():
-    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "default.yaml"
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "01-default.yaml"
     sc = load_scenario_file(scenario_path, "auth_reversal")
     ledger = ScenarioLedger()
     req = _auth_msg()

@@ -9,6 +9,7 @@ from typing import Any
 import iso8583
 import structlog
 
+from iso_checker.app_services import AppServices, Company
 from iso_checker.errors import ErrorCode
 from iso_checker.framing import pack_frame, read_framed_message
 from iso_checker.logging_report import RunReport, mask_pan
@@ -21,7 +22,9 @@ log = structlog.get_logger(__name__)
 
 @dataclass
 class SessionState:
-    scenario: Scenario
+    scenario: Scenario | None = None
+    company: Company | None = None
+    run_id: int | None = None
     step_index: int = 0
     ledger: ScenarioLedger = field(default_factory=ScenarioLedger)
     msg_seq: int = 0
@@ -41,21 +44,24 @@ async def handle_connection(
     scenario_path: Path,
     scenario_name: str | None,
     report: RunReport | None,
+    services: AppServices | None = None,
 ) -> None:
     peer = writer.get_extra_info("peername")
     cfg_log = structlog.get_logger(peer=str(peer))
-    try:
-        scenario = load_scenario_file(scenario_path, scenario_name)
-    except Exception as e:
-        cfg_log.error("scenario_load_failed", err=str(e))
-        writer.close()
-        await writer.wait_closed()
-        return
-
-    state = SessionState(scenario=scenario)
-    if report:
-        report.emit("connected", scenario=scenario.name)
-    cfg_log.info("session_start", scenario=scenario.name)
+    state = SessionState()
+    if not services:
+        try:
+            state.scenario = load_scenario_file(scenario_path, scenario_name)
+        except Exception as e:
+            cfg_log.error("scenario_load_failed", err=str(e))
+            writer.close()
+            await writer.wait_closed()
+            return
+        if report:
+            report.emit("connected", scenario=state.scenario.name)
+        cfg_log.info("session_start", scenario=state.scenario.name)
+    else:
+        cfg_log.info("session_start", scenario="deferred_partner_resolution")
 
     try:
         while True:
@@ -93,10 +99,49 @@ async def handle_connection(
                 pan_masked=mask_pan(str(decoded.get("2", ""))),
             )
 
+            if state.scenario is None:
+                if services is None:
+                    cfg_log.error("scenario_not_loaded")
+                    break
+                company = services.resolve_company(decoded)
+                if company is None:
+                    cfg_log.warning("company_resolution_failed", mti=mti)
+                    if report:
+                        report.emit(
+                            "validation_fail",
+                            error_code=ErrorCode.VALIDATION_RULE.value,
+                            message="Unable to resolve partner/company for inbound message.",
+                        )
+                    break
+                selected_scenario = scenario_name or company.scenario_name
+                try:
+                    state.scenario = load_scenario_file(scenario_path, selected_scenario)
+                except Exception as e:
+                    cfg_log.error("scenario_load_failed", err=str(e), company=company.slug)
+                    break
+                state.company = company
+                state.run_id = services.create_run(
+                    company=company,
+                    scenario_name=state.scenario.name,
+                    session_id=report.session_id if report else str(uuid.uuid4()),
+                    client_addr=str(peer),
+                )
+                services.audit(
+                    "tcp_session_started",
+                    company_id=company.id,
+                    details={"peer": str(peer), "scenario": state.scenario.name},
+                )
+                if report:
+                    report.emit("connected", scenario=state.scenario.name, company=company.name)
+                cfg_log = cfg_log.bind(company=company.slug, scenario=state.scenario.name)
+                cfg_log.info("company_resolved", company=company.slug, scenario=state.scenario.name)
+
             if state.step_index >= len(state.scenario.steps):
                 cfg_log.warning("scenario_already_complete")
                 if report:
                     report.emit("scenario_fail", message="No more steps; reconnect to restart scenario.")
+                if services and state.run_id is not None:
+                    services.finish_run(state.run_id, status="failed", summary="No more steps; reconnect to restart scenario.")
                 break
 
             step = state.scenario.steps[state.step_index]
@@ -123,15 +168,48 @@ async def handle_connection(
                         f"FAIL step {state.step_index + 1} ({step.id}): [{f.code.value}] {f.message}\n"
                         f"  {f.remediation()}"
                     )
+                if services and state.run_id is not None:
+                    services.record_message(
+                        run_id=state.run_id,
+                        seq=state.msg_seq,
+                        direction="inbound",
+                        payload=raw,
+                        decoded=decoded,
+                        validation_status="failed",
+                        error_code=f.code.value,
+                        error_message=f.message,
+                    )
+                    services.finish_run(state.run_id, status="failed", summary=f.message)
                 decline_mti = step.respond.mti
                 out = _decline_payload(decoded, decline_mti, code="057")
                 try:
                     out_b = encode_iso_message(out)
                     writer.write(pack_frame(out_b))
                     await writer.drain()
+                    if services and state.run_id is not None:
+                        services.record_message(
+                            run_id=state.run_id,
+                            seq=state.msg_seq,
+                            direction="outbound",
+                            payload=out_b,
+                            decoded=out,
+                            validation_status="failed",
+                            error_code=f.code.value,
+                            error_message="Auto-decline sent after validation failure.",
+                        )
                 except Exception as enc_e:
                     cfg_log.error("encode_decline_failed", error=str(enc_e))
                 break
+
+            if services and state.run_id is not None:
+                services.record_message(
+                    run_id=state.run_id,
+                    seq=state.msg_seq,
+                    direction="inbound",
+                    payload=raw,
+                    decoded=decoded,
+                    validation_status="ok",
+                )
 
             rsp = build_response_for_step(step, decoded)
             try:
@@ -151,17 +229,35 @@ async def handle_connection(
 
             writer.write(pack_frame(out_b))
             await writer.drain()
+            if services and state.run_id is not None:
+                services.record_message(
+                    run_id=state.run_id,
+                    seq=state.msg_seq,
+                    direction="outbound",
+                    payload=out_b,
+                    decoded=rsp,
+                    validation_status="ok",
+                )
 
             if state.step_index >= len(state.scenario.steps):
                 if report:
-                    report.emit("scenario_pass", scenario=scenario.name, messages=state.msg_seq)
-                    report.human(f"PASS scenario {scenario.name!r} completed in {state.msg_seq} messages.")
-                cfg_log.info("scenario_complete", scenario=scenario.name)
+                    report.emit("scenario_pass", scenario=state.scenario.name, messages=state.msg_seq)
+                    report.human(f"PASS scenario {state.scenario.name!r} completed in {state.msg_seq} messages.")
+                if services and state.run_id is not None:
+                    services.finish_run(
+                        state.run_id,
+                        status="passed",
+                        summary=f"Scenario {state.scenario.name} completed in {state.msg_seq} messages.",
+                    )
+                cfg_log.info("scenario_complete", scenario=state.scenario.name)
                 break
 
     finally:
         writer.close()
         await writer.wait_closed()
+        if services and state.run_id is not None:
+            if state.scenario is not None and state.step_index < len(state.scenario.steps):
+                services.finish_run(state.run_id, status="failed", summary="Session closed before scenario completion.")
         if report:
             report.close()
 
@@ -172,12 +268,13 @@ async def serve(
     scenario_path: Path,
     scenario_name: str | None,
     report_path: Path | None,
+    services: AppServices | None = None,
 ) -> None:
     srv: asyncio.Server | None = None
 
     async def _client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         rep = RunReport(str(uuid.uuid4()), report_path)
-        await handle_connection(reader, writer, scenario_path, scenario_name, rep)
+        await handle_connection(reader, writer, scenario_path, scenario_name, rep, services)
 
     srv = await asyncio.start_server(_client, host, port)
     log.info("listening", host=host, port=port, scenario=str(scenario_path))

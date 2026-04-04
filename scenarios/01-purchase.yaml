@@ -1,0 +1,13 @@
+scenarios:
+  - name: auth_purchase
+    description: Authorization 1100
+    steps:
+      - id: auth
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      

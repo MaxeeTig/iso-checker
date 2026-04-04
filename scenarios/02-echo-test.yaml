@@ -1,0 +1,11 @@
+scenarios:
+  - name: network_echo
+    description: Network management echo (1804 / 831) and 1814 response.
+    steps:
+      - id: echo
+        expect_mti: "1804"
+        validate: {}
+        respond:
+          mti: "1814"
+          field_overrides:
+            "39": "000"

@@ -1,0 +1,14 @@
+scenarios:
+  - name: financial_purchase
+    description: >
+      Financial request 1200 (SMS / immediate post) for a POS purchase; Field 3 / 48 tag 002
+      alignment is checked. Same field layout as authorization per SVFE.
+    steps:
+      - id: financial
+        expect_mti: "1200"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1210"
+          field_overrides:
+            "39": "000"

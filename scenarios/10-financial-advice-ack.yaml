@@ -1,0 +1,14 @@
+scenarios:
+  - name: financial_advice_ack
+    description: >
+      Financial advice 1220 must be acknowledged with 1230 (stand-in / completed at SVFE).
+      Same mandatory field set as 1200 in this project profile.
+    steps:
+      - id: advice
+        expect_mti: "1220"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1230"
+          field_overrides:
+            "39": "000"

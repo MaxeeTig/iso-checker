@@ -1,0 +1,26 @@
+scenarios:
+  - name: purchase_refund
+    description: >
+      Approved purchase authorization then a return/refund request (transaction code 20 in DE3).
+      Field 48 tag 002 should be 775 (POS Return or Refund) or 681 (E-POS) per deployment; refund
+      matching uses Field 90 — scenario only requires DE3 prefix and presence of 90.
+    steps:
+      - id: purchase
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      - id: refund
+        expect_mti: "1100"
+        validate:
+          expect_field_values:
+            "3": "200000"
+          required_fields:
+            - "90"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"

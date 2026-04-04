@@ -93,16 +93,31 @@ def _parse_step(d: dict[str, Any]) -> Step:
     )
 
 
-def load_scenario_file(path: Path, scenario_name: str | None = None) -> Scenario:
+def _load_scenarios_from_file(path: Path) -> list[dict[str, Any]]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if isinstance(raw, dict) and "scenarios" in raw:
-        scenarios_list = list(raw["scenarios"])
+        return list(raw["scenarios"])
     elif isinstance(raw, dict) and "steps" in raw:
-        scenarios_list = [raw]
+        return [raw]
     else:
         raise ValueError("YAML must contain 'scenarios: [...]' or top-level 'steps:'")
+
+
+def list_scenarios(path: Path) -> list[dict[str, Any]]:
+    if path.is_dir():
+        scenarios_list: list[dict[str, Any]] = []
+        for candidate in sorted(path.glob("*.y*ml")):
+            for scenario in _load_scenarios_from_file(candidate):
+                scenarios_list.append({**scenario, "_source_file": candidate.name})
+    else:
+        scenarios_list = [{**scenario, "_source_file": path.name} for scenario in _load_scenarios_from_file(path)]
     if not scenarios_list:
-        raise ValueError("No scenarios defined")
+        raise ValueError(f"No scenarios defined in {path}")
+    return scenarios_list
+
+
+def load_scenario_file(path: Path, scenario_name: str | None = None) -> Scenario:
+    scenarios_list = list_scenarios(path)
     picked: dict[str, Any] | None = None
     if scenario_name:
         for s in scenarios_list:

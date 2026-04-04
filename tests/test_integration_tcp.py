@@ -1,8 +1,10 @@
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
 
+from iso_checker.app_services import AppServices
 from iso_checker.framing import pack_frame, read_framed_message
 from iso_checker.logging_report import RunReport
 from iso_checker.message_codec import decode_iso_message, encode_iso_message
@@ -35,7 +37,7 @@ def _sample_1100():
 
 @pytest.mark.asyncio
 async def test_tcp_auth_reversal_roundtrip() -> None:
-    scen = Path(__file__).resolve().parent.parent / "scenarios" / "default.yaml"
+    scen = Path(__file__).resolve().parent.parent / "scenarios" / "01-default.yaml"
 
     async def handler(
         reader: asyncio.StreamReader,
@@ -78,3 +80,58 @@ async def test_tcp_auth_reversal_roundtrip() -> None:
             await bg
         except asyncio.CancelledError:
             pass
+
+
+@pytest.mark.asyncio
+async def test_tcp_auth_reversal_persists_run(tmp_path: Path) -> None:
+    scen = Path(__file__).resolve().parent.parent / "scenarios" / "01-default.yaml"
+    db_path = tmp_path / "iso.sqlite3"
+    services = AppServices(db_path, scen)
+    services.init_schema()
+    services.bootstrap_defaults()
+
+    async def handler(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        await handle_connection(reader, writer, scen, None, RunReport("test-session", None), services)
+
+    srv = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = srv.sockets[0].getsockname()[1]
+
+    async def serve() -> None:
+        async with srv:
+            await srv.serve_forever()
+
+    bg = asyncio.create_task(serve())
+    await asyncio.sleep(0.05)
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", port)
+        auth = encode_iso_message(_sample_1100())
+        w.write(pack_frame(auth))
+        await w.drain()
+        raw = await asyncio.wait_for(read_framed_message(r), timeout=2.0)
+        d1, _ = decode_iso_message(raw)
+        rev = _sample_1100()
+        rev["t"] = "1420"
+        rev["37"] = d1["37"]
+        rev["39"] = "000"
+        w.write(pack_frame(encode_iso_message(rev)))
+        await w.drain()
+        raw2 = await asyncio.wait_for(read_framed_message(r), timeout=2.0)
+        d2, _ = decode_iso_message(raw2)
+        assert d2["t"] == "1430"
+        w.close()
+        await w.wait_closed()
+    finally:
+        bg.cancel()
+        try:
+            await bg
+        except asyncio.CancelledError:
+            pass
+
+    conn = sqlite3.connect(db_path)
+    run_row = conn.execute("SELECT status, scenario_name FROM scenario_runs").fetchone()
+    assert run_row == ("passed", "auth_reversal")
+    count = conn.execute("SELECT COUNT(*) FROM message_events").fetchone()[0]
+    assert count == 4

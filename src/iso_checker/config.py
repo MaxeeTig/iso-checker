@@ -11,11 +11,15 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8583
-    scenario_file: Path = Path("scenarios/default.yaml")
+    http_host: str = "127.0.0.1"
+    http_port: int = 8080
+    scenario_file: Path = Path("scenarios")
     scenario_name: str | None = None
     log_level: str = "INFO"
     report_path: Path | None = None
     json_stdout: bool = False
+    db_path: Path = Path("var/iso_checker.sqlite3")
+    session_secret: str = "change-me"
     max_scenario_repeats: int = Field(default=1, ge=1, description="Restart scenario after completion")
 
 

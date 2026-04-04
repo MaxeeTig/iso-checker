@@ -1,0 +1,25 @@
+scenarios:
+  - name: purchase_void
+    description: >
+      Approved purchase then purchase cancellation (void, SVFE type 738, DE3 transaction code 20).
+      Field 90 carries original data elements per MESSAGE MATCHING in the Host2Host spec.
+    steps:
+      - id: purchase
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      - id: void
+        expect_mti: "1100"
+        validate:
+          expect_field_values:
+            "3": "200000"
+          required_fields:
+            - "90"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"

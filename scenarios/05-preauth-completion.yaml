@@ -1,0 +1,29 @@
+scenarios:
+  - name: preauth_completion
+    description: >
+      POS pre-authorization (DE3 180000, SVFE type 736) then completion (DE3 900000, type 737).
+      Second step must match PAN and RRN from the first; Field 90 is required on completion per spec.
+    steps:
+      - id: preauth
+        expect_mti: "1100"
+        validate:
+          field48_check_de3: true
+          expect_field_values:
+            "3": "180000"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
+      - id: completion
+        expect_mti: "1100"
+        validate:
+          matches_step: preauth
+          field48_check_de3: true
+          expect_field_values:
+            "3": "900000"
+          required_fields:
+            - "90"
+        respond:
+          mti: "1110"
+          field_overrides:
+            "39": "000"
