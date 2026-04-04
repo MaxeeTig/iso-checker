@@ -8,7 +8,7 @@ from typing import Any
 
 from iso_checker.auth import hash_password, verify_password
 from iso_checker.logging_report import mask_pan
-from iso_checker.scenario_engine import list_scenarios, load_scenario_file
+from iso_checker.scenario_engine import list_scenarios, load_scenario_file, scenario_supports_reference_client
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,7 @@ class AppServices:
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL,
                     active INTEGER NOT NULL DEFAULT 1,
+                    selected_scenarios_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -128,8 +129,17 @@ class AppServices:
                     """,
                     (row["id"], row["scenario_name"]),
                 )
+            user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "selected_scenarios_json" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN selected_scenarios_json TEXT NOT NULL DEFAULT '[]'")
 
-    def bootstrap_defaults(self, *, admin_username: str = "admin", admin_password: str = "admin") -> None:
+    def bootstrap_defaults(
+        self,
+        *,
+        admin_username: str = "admin",
+        admin_password: str = "admin",
+        simple_partner_bootstrap: bool = False,
+    ) -> None:
         scenarios = self.list_scenarios()
         default_scenario = scenarios[0]["name"]
         with self._connect() as conn:
@@ -144,26 +154,43 @@ class AppServices:
                 )
             user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             if user_count == 0:
-                conn.execute(
-                    """
-                    INSERT INTO users (username, password_hash, role, company_id)
-                    VALUES (?, ?, ?, NULL)
-                    """,
-                    (admin_username, hash_password(admin_password), "admin"),
-                )
+                if simple_partner_bootstrap:
+                    demo_id = conn.execute("SELECT id FROM companies ORDER BY id LIMIT 1").fetchone()[0]
+                    conn.execute(
+                        """
+                        INSERT INTO users (username, password_hash, role, company_id)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (admin_username, hash_password(admin_password), "partner_user", int(demo_id)),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO users (username, password_hash, role, company_id)
+                        VALUES (?, ?, ?, NULL)
+                        """,
+                        (admin_username, hash_password(admin_password), "admin"),
+                    )
 
-    def list_scenarios(self) -> list[dict[str, str]]:
-        raw = json.loads(json.dumps(self._load_scenario_catalog()))
-        return raw
+    def list_scenarios(self) -> list[dict[str, Any]]:
+        return json.loads(json.dumps(self._load_scenario_catalog()))
 
-    def _load_scenario_catalog(self) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
+    def _load_scenario_catalog(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for scenario in list_scenarios(self.scenario_file):
+            name = str(scenario.get("name") or "unnamed")
+            ref_ready = False
+            try:
+                sc = load_scenario_file(self.scenario_file, name)
+                ref_ready = scenario_supports_reference_client(sc)
+            except Exception:
+                ref_ready = False
             out.append(
                 {
-                    "name": str(scenario.get("name") or "unnamed"),
+                    "name": name,
                     "description": str(scenario.get("description") or ""),
                     "filename": str(scenario.get("_source_file") or self.scenario_file.name),
+                    "reference_client_ready": ref_ready,
                 }
             )
         return out
@@ -299,7 +326,66 @@ class AppServices:
             active=bool(row["active"]),
         )
 
-    def resolve_company(self, decoded: dict[str, Any]) -> Company | None:
+    def get_user_selected_scenarios(self, user_id: int) -> list[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT selected_scenarios_json FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return []
+        try:
+            data = json.loads(str(row["selected_scenarios_json"] or "[]"))
+            if isinstance(data, list):
+                return [str(x) for x in data]
+        except json.JSONDecodeError:
+            pass
+        return []
+
+    def set_user_selected_scenarios(self, user_id: int, names: list[str]) -> None:
+        catalog = {str(x["name"]) for x in self._load_scenario_catalog()}
+        filtered = sorted({n for n in names if n in catalog})
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET selected_scenarios_json = ? WHERE id = ?",
+                (json.dumps(filtered, ensure_ascii=False), user_id),
+            )
+
+    def set_company_default_scenario(self, company_id: int, scenario_name: str) -> None:
+        self.ensure_scenario_exists(scenario_name)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE companies SET scenario_name = ? WHERE id = ?",
+                (scenario_name, company_id),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO company_scenarios (company_id, scenario_name)
+                VALUES (?, ?)
+                """,
+                (company_id, scenario_name),
+            )
+
+    def _resolve_company_single_tenant(self, default_company_slug: str | None) -> Company | None:
+        companies = [c for c in self.list_companies() if c.active]
+        if default_company_slug:
+            for c in companies:
+                if c.slug == default_company_slug:
+                    return c
+            return None
+        if len(companies) == 1:
+            return companies[0]
+        return None
+
+    def resolve_company(
+        self,
+        decoded: dict[str, Any],
+        *,
+        single_tenant: bool = False,
+        default_company_slug: str | None = None,
+    ) -> Company | None:
+        if single_tenant:
+            return self._resolve_company_single_tenant(default_company_slug)
         companies = [company for company in self.list_companies() if company.active]
         candidates: list[tuple[int, Company]] = []
         for company in companies:

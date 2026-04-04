@@ -25,6 +25,7 @@ iso-checker serve --scenario-file scenarios/default.yaml --scenario-name network
 | `validate.matches_step` | Id of a prior step; for reversals, **PAN (DE2)** and **RRN (DE37)** must match that step’s request/response. |
 | `respond.mti` | Simulator response MTI. |
 | `respond.field_overrides` | String DE number → value overrides on the response. |
+| `reference_request` | Optional. Template for the **reference TCP client** (portal “Tests” and `scripts/client_run_scenario.py`). Either a flat map of ISO fields (`t`, digit keys as strings), or a mapping with `inherit_request_from` (prior step `id`), optional `field_overrides`, and optional `copy_response_fields` (target DE → source DE in that step’s **response**). Field **11** (STAN) is overwritten at send time; company **32/41/42** from the portal user’s company override template values when set. |
 
 ## Error codes (`error_code` in JSON Lines reports)
 

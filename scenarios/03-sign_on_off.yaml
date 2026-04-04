@@ -13,6 +13,10 @@ scenarios:
           mti: "1814"
           field_overrides:
             "39": "000"
+        reference_request:
+          t: "1804"
+          "12": "250403120000"
+          "24": "801"
       - id: sign_off
         expect_mti: "1804"
         validate:
@@ -22,3 +26,8 @@ scenarios:
           mti: "1814"
           field_overrides:
             "39": "000"
+        reference_request:
+          t: "1804"
+          "12": "250403120000"
+          "24": "802"
+

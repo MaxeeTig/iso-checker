@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     db_path: Path = Path("var/iso_checker.sqlite3")
     session_secret: str = "change-me"
     max_scenario_repeats: int = Field(default=1, ge=1, description="Restart scenario after completion")
+    single_tenant: bool = Field(default=False, description="Resolve TCP sessions to one company without DE32/41/42")
+    default_company_slug: str | None = Field(default=None, description="When single-tenant and multiple companies exist")
+    portal_admin_enabled: bool = Field(default=True, description="Expose /companies and /users in the portal")
 
 
 def load_settings(**overrides: object) -> Settings:

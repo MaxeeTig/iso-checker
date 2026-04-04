@@ -45,6 +45,9 @@ async def handle_connection(
     scenario_name: str | None,
     report: RunReport | None,
     services: AppServices | None = None,
+    *,
+    single_tenant: bool = False,
+    default_company_slug: str | None = None,
 ) -> None:
     peer = writer.get_extra_info("peername")
     cfg_log = structlog.get_logger(peer=str(peer))
@@ -103,7 +106,11 @@ async def handle_connection(
                 if services is None:
                     cfg_log.error("scenario_not_loaded")
                     break
-                company = services.resolve_company(decoded)
+                company = services.resolve_company(
+                    decoded,
+                    single_tenant=single_tenant,
+                    default_company_slug=default_company_slug,
+                )
                 if company is None:
                     cfg_log.warning("company_resolution_failed", mti=mti)
                     if report:
@@ -269,12 +276,24 @@ async def serve(
     scenario_name: str | None,
     report_path: Path | None,
     services: AppServices | None = None,
+    *,
+    single_tenant: bool = False,
+    default_company_slug: str | None = None,
 ) -> None:
     srv: asyncio.Server | None = None
 
     async def _client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         rep = RunReport(str(uuid.uuid4()), report_path)
-        await handle_connection(reader, writer, scenario_path, scenario_name, rep, services)
+        await handle_connection(
+            reader,
+            writer,
+            scenario_path,
+            scenario_name,
+            rep,
+            services,
+            single_tenant=single_tenant,
+            default_company_slug=default_company_slug,
+        )
 
     srv = await asyncio.start_server(_client, host, port)
     log.info("listening", host=host, port=port, scenario=str(scenario_path))

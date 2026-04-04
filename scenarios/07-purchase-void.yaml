@@ -12,6 +12,23 @@ scenarios:
           mti: "1110"
           field_overrides:
             "39": "000"
+        reference_request:
+          t: "1100"
+          "2": "4111111111111111"
+          "3": "000000"
+          "4": "000000001000"
+          "12": "250403120000"
+          "14": "2512"
+          "15": "250403"
+          "18": "5999"
+          "22": "510101510301"
+          "32": "123456"
+          "37": "RRN100000001"
+          "41": "TERM0001"
+          "42": "MERCHANT00001"
+          "43": "ShopX                   CITY    PL"
+          "48": "009002003774"
+          "49": "978"
       - id: void
         expect_mti: "1100"
         validate:
@@ -23,3 +40,12 @@ scenarios:
           mti: "1110"
           field_overrides:
             "39": "000"
+        reference_request:
+          inherit_request_from: purchase
+          field_overrides:
+            "3": "200000"
+            "48": "009002003775"
+            "90": "010000000000000000000000000000000"
+          copy_response_fields:
+            "37": "37"
+

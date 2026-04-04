@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import html
 import json
-import subprocess
-import sys
 from dataclasses import dataclass
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from iso_checker.app_services import AppServices, User
 from iso_checker.auth import issue_session_cookie, parse_session_cookie
+from iso_checker.reference_client import run_reference_scenario, scenario_reference_payloads_for_display
 
 
 @dataclass(frozen=True)
@@ -20,6 +19,8 @@ class PortalConfig:
     simulator_host: str
     simulator_port: int
     scenario_file: Path
+    portal_admin_enabled: bool = True
+    single_tenant: bool = False
 
 
 def create_portal_server(host: str, port: int, services: AppServices, session_secret: str, config: PortalConfig) -> ThreadingHTTPServer:
@@ -28,9 +29,6 @@ def create_portal_server(host: str, port: int, services: AppServices, session_se
 
 
 def _make_handler(services: AppServices, session_secret: str, config: PortalConfig):
-    repo_root = Path(__file__).resolve().parents[2]
-    test_script = repo_root / "scripts" / "client_run_scenario.py"
-
     class PortalHandler(BaseHTTPRequestHandler):
         server_version = "IsoCheckerPortal/0.1"
 
@@ -65,13 +63,27 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
             if path == "/status":
                 return self._status_page(user)
             if path == "/companies" and method == "GET":
+                if not config.portal_admin_enabled:
+                    return self.send_error(404)
                 return self._companies_page(user)
             if path == "/companies" and method == "POST":
+                if not config.portal_admin_enabled:
+                    return self.send_error(404)
                 return self._companies_create(user)
             if path == "/users" and method == "GET":
+                if not config.portal_admin_enabled:
+                    return self.send_error(404)
                 return self._users_page(user)
             if path == "/users" and method == "POST":
+                if not config.portal_admin_enabled:
+                    return self.send_error(404)
                 return self._users_create(user)
+            if path == "/plan" and method == "GET":
+                return self._plan_page(user)
+            if path == "/plan" and method == "POST":
+                return self._plan_save(user)
+            if path == "/tcp-scenario" and method == "POST":
+                return self._tcp_scenario_save(user)
             if path == "/scenarios":
                 return self._scenarios_page(user)
             if path == "/runs":
@@ -151,11 +163,12 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
             if user:
                 links = [
                     '<a href="/status">Status</a>',
+                    '<a href="/plan">Plan</a>',
                     '<a href="/scenarios">Scenarios</a>',
                     '<a href="/runs">Runs</a>',
                     '<a href="/tests">Tests</a>',
                 ]
-                if user.role == "admin":
+                if config.portal_admin_enabled and user.role == "admin":
                     links.extend(
                         [
                             '<a href="/companies">Companies</a>',
@@ -244,10 +257,54 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
             self.send_header("Location", "/login")
             self.end_headers()
 
+        def _scenario_select_options(self, scenarios: list[dict[str, Any]], selected: str) -> str:
+            return "".join(
+                f'<option value="{html.escape(s["name"])}"'
+                f'{" selected" if s["name"] == selected else ""}>'
+                f"{html.escape(s['name'])}</option>"
+                for s in scenarios
+            )
+
         def _status_page(self, user: User) -> None:
             runs = services.list_runs(user)
             companies = services.list_companies()
             scenarios = services.list_scenarios()
+            st_note = (
+                "<p class='muted'>Simulator uses <strong>single-tenant</strong> TCP resolution (no DE32/41/42 match).</p>"
+                if config.single_tenant
+                else "<p class='muted'>External clients must send DE32/41/42 matching the company record unless single-tenant mode is enabled.</p>"
+            )
+            tcp_panel = ""
+            if user.role == "admin" and companies:
+                co0 = companies[0]
+                scen_opts = self._scenario_select_options(scenarios, co0.scenario_name)
+                company_opts = "".join(
+                    f'<option value="{c.id}">{html.escape(c.name)}</option>' for c in companies
+                )
+                tcp_panel = f"""
+              <section class="panel">
+                <h2>TCP default scenario</h2>
+                <p class="muted">YAML scenario used for the selected company on each new external TCP session (when the process has no global <code>--scenario-name</code>). Pick company and scenario, then save.</p>
+                <form method="post" action="/tcp-scenario">
+                  <label>Company <select name="company_id">{company_opts}</select></label>
+                  <label>Scenario <select name="scenario_name">{scen_opts}</select></label>
+                  <button type="submit">Save</button>
+                </form>
+              </section>"""
+            elif user.company_id:
+                co = services.get_company(user.company_id)
+                if co:
+                    scen_opts = self._scenario_select_options(scenarios, co.scenario_name)
+                    tcp_panel = f"""
+              <section class="panel">
+                <h2>TCP default scenario</h2>
+                <p class="muted">Company <strong>{html.escape(co.name)}</strong> — used for new Host2Host sessions from your systems.</p>
+                <form method="post" action="/tcp-scenario">
+                  <input type="hidden" name="company_id" value="{co.id}">
+                  <label>Scenario <select name="scenario_name">{scen_opts}</select></label>
+                  <button type="submit">Save</button>
+                </form>
+              </section>"""
             body = f"""
             <div class="grid">
               <section class="panel">
@@ -256,6 +313,7 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
                 <p>Scenario file: <code>{html.escape(str(config.scenario_file))}</code></p>
                 <p>Tracked scenarios: <strong>{len(scenarios)}</strong></p>
                 <p>Recent audits: <strong>{services.count_recent_audits()}</strong></p>
+                {st_note}
               </section>
               <section class="panel">
                 <h2>Tenancy</h2>
@@ -268,6 +326,7 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
                 <p>Visible runs: <strong>{len(runs)}</strong></p>
                 <p class="muted">Use the Runs page for message timelines and validation details.</p>
               </section>
+              {tcp_panel}
             </div>
             """
             self._send_html(self._layout("Status", body, user))
@@ -396,14 +455,17 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
         def _scenarios_page(self, user: User) -> None:
             rows = []
             for item in services.list_scenarios():
+                rc = "yes" if item.get("reference_client_ready") else "no"
                 rows.append(
-                    f"<tr><td>{html.escape(item['name'])}</td><td>{html.escape(item['filename'])}</td><td>{html.escape(item['description'])}</td></tr>"
+                    f"<tr><td>{html.escape(item['name'])}</td><td>{html.escape(item['filename'])}</td>"
+                    f"<td>{html.escape(item['description'])}</td><td>{rc}</td></tr>"
                 )
             body = f"""
             <div class="panel">
               <h2>Scenario catalog</h2>
+              <p class="muted">Reference client = all steps define <code>reference_request</code> (portal Tests / <code>client_run_scenario.py</code>).</p>
               <table>
-                <tr><th>Name</th><th>Filename</th><th>Description</th></tr>
+                <tr><th>Name</th><th>Filename</th><th>Description</th><th>Ref. client</th></tr>
                 {''.join(rows)}
               </table>
             </div>
@@ -462,9 +524,24 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
             self._send_html(self._layout(f"Run {run_id}", body, user))
 
         def _tests_page(self, user: User, result: str | None = None) -> None:
+            all_sc = services.list_scenarios()
+            plan = services.get_user_selected_scenarios(user.id)
+            runnable_all = [s for s in all_sc if s.get("reference_client_ready")]
+            if plan:
+                runnable = [s for s in runnable_all if s["name"] in set(plan)]
+            else:
+                runnable = runnable_all
             options = "".join(
                 f'<option value="{html.escape(item["name"])}">{html.escape(item["name"])}</option>'
-                for item in services.list_scenarios()
+                for item in runnable
+            )
+            if not options:
+                options = '<option value="">(no reference-ready scenarios; check Plan or Scenarios)</option>'
+            plan_note = (
+                f"<p class='muted'>Your plan lists {len(plan)} scenario(s); showing {len(runnable)} reference-ready match(es). "
+                "Empty plan = all reference-ready scenarios.</p>"
+                if plan
+                else "<p class='muted'>Empty plan: all reference-ready scenarios are listed. Set a plan on the Plan page to focus the list.</p>"
             )
             result_panel = ""
             if result is not None:
@@ -473,6 +550,7 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
             <div class="grid">
               <section class="panel">
                 <h2>Launch reference client</h2>
+                {plan_note}
                 <form method="post" action="/tests/run">
                   <label>Scenario
                     <select name="scenario">{options}</select>
@@ -481,7 +559,7 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
                   <label>Port <input name="port" value="{config.simulator_port}"></label>
                   <button type="submit">Run test</button>
                 </form>
-                <p class="muted">This executes the maintained reference script on the same machine as the portal.</p>
+                <p class="muted">Runs on the portal host against your YAML <code>reference_request</code> templates (STAN and company DE32/41/42 applied automatically).</p>
               </section>
               {result_panel}
             </div>
@@ -490,37 +568,126 @@ def _make_handler(services: AppServices, session_secret: str, config: PortalConf
 
         def _tests_run(self, user: User) -> None:
             form = self._read_form()
-            cmd = [
-                sys.executable,
-                str(test_script),
-                "--host",
-                form.get("host", config.simulator_host),
-                "--port",
-                form.get("port", str(config.simulator_port)),
-                "--scenario",
-                form.get("scenario", ""),
-            ]
+            scenario = form.get("scenario", "").strip()
+            host = form.get("host", config.simulator_host) or config.simulator_host
+            port_raw = form.get("port", str(config.simulator_port))
             try:
-                proc = subprocess.run(
-                    cmd,
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=45,
-                    check=False,
+                port = int(port_raw)
+            except ValueError:
+                port = config.simulator_port
+            company = services.get_company(user.company_id) if user.company_id else None
+            lines: list[str] = []
+            if scenario:
+                try:
+                    preview = scenario_reference_payloads_for_display(config.scenario_file, scenario)
+                    lines.append("Reference templates from YAML (before STAN / company field overlay):")
+                    lines.append(json.dumps(preview, indent=2, ensure_ascii=False))
+                    lines.append("")
+                except Exception as exc:
+                    lines.append(f"(Could not load scenario preview: {exc})")
+                    lines.append("")
+                result = run_reference_scenario(
+                    host,
+                    port,
+                    config.scenario_file,
+                    scenario,
+                    company=company,
                 )
-                output = proc.stdout
-                if proc.stderr:
-                    output += "\nSTDERR:\n" + proc.stderr
-                output += f"\nExit code: {proc.returncode}\n"
-            except Exception as exc:
-                output = f"Failed to execute client script: {exc}"
+                lines.extend(result.lines)
+                if result.error:
+                    lines.append(f"Failed: {result.error}")
+            else:
+                lines.append("No scenario selected.")
+            output = "\n".join(lines)
             services.audit(
                 "test_launched",
                 user_id=user.id,
                 company_id=user.company_id,
-                details={"scenario": form.get("scenario", ""), "host": form.get("host", ""), "port": form.get("port", "")},
+                details={"scenario": scenario, "host": host, "port": port},
             )
             self._tests_page(user, output)
+
+        def _plan_page(self, user: User) -> None:
+            all_s = services.list_scenarios()
+            picked = set(services.get_user_selected_scenarios(user.id))
+            checks = []
+            for s in all_s:
+                sel = " checked" if s["name"] in picked else ""
+                tag = " ✓ ref.client" if s.get("reference_client_ready") else ""
+                checks.append(
+                    f"<label><input type='checkbox' name='scenario_names' value='{html.escape(s['name'])}'{sel}>"
+                    f" {html.escape(s['name'])}{tag}</label>"
+                )
+            body = f"""
+            <div class="panel">
+              <h2>Test plan</h2>
+              <p class="muted">Pick scenarios you want to focus on. The Tests page only lists reference-client-ready scenarios that appear here; if you select nothing, Tests shows every reference-ready scenario.</p>
+              <form method="post" action="/plan">
+                <fieldset><legend>Scenarios</legend>{"".join(checks)}</fieldset>
+                <button type="submit">Save plan</button>
+              </form>
+            </div>
+            """
+            self._send_html(self._layout("Plan", body, user))
+
+        def _plan_save(self, user: User) -> None:
+            form_multi = self._read_form_multi()
+            names = [item.strip() for item in form_multi.get("scenario_names", []) if item.strip()]
+            services.set_user_selected_scenarios(user.id, names)
+            services.audit("plan_updated", user_id=user.id, company_id=user.company_id, details={"scenarios": names})
+            self._redirect("/plan")
+
+        def _tcp_scenario_save(self, user: User) -> None:
+            form = self._read_form()
+            name = form.get("scenario_name", "").strip()
+            if not name:
+                self._redirect("/status")
+                return
+            try:
+                if user.role == "admin":
+                    cid = int(form.get("company_id", "0"))
+                    services.set_company_default_scenario(cid, name)
+                    services.audit(
+                        "tcp_default_scenario",
+                        user_id=user.id,
+                        company_id=cid,
+                        details={"scenario_name": name},
+                    )
+                elif user.company_id:
+                    raw_cid = form.get("company_id", "").strip()
+                    if raw_cid and int(raw_cid) != user.company_id:
+                        self._send_html(
+                            self._layout(
+                                "Forbidden",
+                                "<div class='panel'><h2>Forbidden</h2><p>Invalid company.</p></div>",
+                                user,
+                            ),
+                            status=403,
+                        )
+                        return
+                    services.set_company_default_scenario(user.company_id, name)
+                    services.audit(
+                        "tcp_default_scenario",
+                        user_id=user.id,
+                        company_id=user.company_id,
+                        details={"scenario_name": name},
+                    )
+                else:
+                    self._send_html(
+                        self._layout(
+                            "Forbidden",
+                            "<div class='panel'><h2>Forbidden</h2><p>No company to update.</p></div>",
+                            user,
+                        ),
+                        status=403,
+                    )
+                    return
+            except Exception as exc:
+                self._send_html(
+                    self._layout("Error", f"<div class='panel'><p>{html.escape(str(exc))}</p></div>", user),
+                    status=400,
+                )
+                return
+            self._redirect("/status")
 
     return PortalHandler

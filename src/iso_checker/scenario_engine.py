@@ -33,12 +33,28 @@ class CaptureConfig:
 
 
 @dataclass
+class ReferenceRequestSpec:
+    """Optional template for the reference TCP client (portal / CLI).
+
+    Either ``flat_fields`` alone (full ISO field dict, keys ``t`` / digits), or
+    ``inherit_request_from`` to copy a prior step's request and apply overrides /
+    copy fields from that step's simulator response (e.g. RRN in field 37).
+    """
+
+    flat_fields: dict[str, str] | None = None
+    inherit_request_from: str | None = None
+    field_overrides: dict[str, str] = field(default_factory=dict)
+    copy_response_fields: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class Step:
     id: str
     expect_mti: str
     validate: ValidateConfig
     respond: RespondConfig
     capture: CaptureConfig
+    reference_request: ReferenceRequestSpec | None = None
 
 
 @dataclass
@@ -82,6 +98,28 @@ def _parse_capture(d: dict[str, Any]) -> CaptureConfig:
     )
 
 
+def _parse_reference_request(raw: Any) -> ReferenceRequestSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("reference_request must be a mapping")
+    if "inherit_request_from" in raw:
+        fro = raw.get("inherit_request_from")
+        if not fro:
+            raise ValueError("reference_request.inherit_request_from must be non-empty")
+        fo = raw.get("field_overrides") or {}
+        cr = raw.get("copy_response_fields") or {}
+        if not isinstance(fo, dict) or not isinstance(cr, dict):
+            raise ValueError("reference_request field_overrides and copy_response_fields must be mappings")
+        return ReferenceRequestSpec(
+            inherit_request_from=str(fro),
+            field_overrides={str(k): str(v) for k, v in fo.items()},
+            copy_response_fields={str(k): str(v) for k, v in cr.items()},
+        )
+    flat = {str(k): str(v) for k, v in raw.items()}
+    return ReferenceRequestSpec(flat_fields=flat)
+
+
 def _parse_step(d: dict[str, Any]) -> Step:
     rc = d.get("respond") or {}
     return Step(
@@ -90,6 +128,7 @@ def _parse_step(d: dict[str, Any]) -> Step:
         validate=_parse_validate(d.get("validate") or {}),
         respond=RespondConfig(mti=str(rc["mti"]), field_overrides=dict(rc.get("field_overrides") or {})),
         capture=_parse_capture(d.get("capture") or {}),
+        reference_request=_parse_reference_request(d.get("reference_request")),
     )
 
 
@@ -232,3 +271,14 @@ def run_validations(decoded: dict[str, Any], step: Step, ledger: ScenarioLedger)
     if step.validate.matches_step:
         fail.extend(validate_step_capture(step.validate.matches_step, ledger, decoded))
     return fail
+
+
+def step_supports_reference_client(step: Step) -> bool:
+    r = step.reference_request
+    if r is None:
+        return False
+    return r.flat_fields is not None or r.inherit_request_from is not None
+
+
+def scenario_supports_reference_client(scenario: Scenario) -> bool:
+    return bool(scenario.steps) and all(step_supports_reference_client(s) for s in scenario.steps)

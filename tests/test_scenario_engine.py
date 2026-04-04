@@ -4,7 +4,14 @@ import pytest
 
 from iso_checker.errors import ErrorCode
 from iso_checker.message_codec import decode_iso_message, encode_iso_message
-from iso_checker.scenario_engine import ScenarioLedger, list_scenarios, load_scenario_file, run_validations
+from iso_checker.reference_client import build_outbound_fields
+from iso_checker.scenario_engine import (
+    ScenarioLedger,
+    list_scenarios,
+    load_scenario_file,
+    run_validations,
+    step_supports_reference_client,
+)
 
 
 def _auth_msg():
@@ -148,3 +155,25 @@ def test_auth_then_reversal_match():
     rev["39"] = "000"
     rdec, _ = decode_iso_message(encode_iso_message(rev))
     assert not run_validations(rdec, step1, ledger)
+
+
+def test_reference_request_steps_marked() -> None:
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "01-default.yaml"
+    sc = load_scenario_file(scenario_path, "auth_reversal")
+    assert step_supports_reference_client(sc.steps[0])
+    assert step_supports_reference_client(sc.steps[1])
+
+
+def test_build_outbound_reversal_uses_response_rrn() -> None:
+    scenario_path = Path(__file__).resolve().parent.parent / "scenarios" / "01-default.yaml"
+    sc = load_scenario_file(scenario_path, "auth_reversal")
+    ledger = ScenarioLedger()
+    ledger.record(
+        "auth",
+        {"t": "1100", "2": "4111111111111111", "37": "REQ"},
+        {"t": "1110", "37": "RRN999"},
+    )
+    fields = build_outbound_fields(sc.steps[1], ledger, company=None, stan="100002")
+    assert fields["t"] == "1420"
+    assert fields["37"] == "RRN999"
+    assert fields["11"] == "100002"
